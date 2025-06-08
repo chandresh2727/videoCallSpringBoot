@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Video Call</title>
+</head>
+<body>
+<video id="localVideo" autoplay muted></video>
+<video id="remoteVideo" autoplay></video>
+<button onclick="startCall()">Start Call</button>
+
+<script>
+    let localStream, peerConnection;
+    const user = prompt("Enter your name"); // Alice or Bob
+    const target = prompt("Who do you want to call?"); // Bob or Alice
+    const socket = new WebSocket(`ws://localhost:8080/signal?user=${user}`);
+
+    const config = {
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    };
+
+    socket.onmessage = async (msg) => {
+      const data = JSON.parse(msg.data);
+      if (data.type === "offer") await handleOffer(data);
+      else if (data.type === "answer") await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+      else if (data.type === "ice") await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+    };
+
+    async function startCall() {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      document.getElementById("localVideo").srcObject = localStream;
+
+      peerConnection = new RTCPeerConnection(config);
+      peerConnection.onicecandidate = e => {
+        if (e.candidate) {
+          socket.send(JSON.stringify({ type: "ice", to: target, candidate: e.candidate }));
+        }
+      };
+      peerConnection.ontrack = e => document.getElementById("remoteVideo").srcObject = e.streams[0];
+
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.send(JSON.stringify({ type: "offer", to: target, from: user, offer }));
+    }
+
+    async function handleOffer(data) {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      document.getElementById("localVideo").srcObject = localStream;
+
+      peerConnection = new RTCPeerConnection(config);
+      peerConnection.onicecandidate = e => {
+        if (e.candidate) {
+          socket.send(JSON.stringify({ type: "ice", to: data.from, candidate: e.candidate }));
+        }
+      };
+      peerConnection.ontrack = e => document.getElementById("remoteVideo").srcObject = e.streams[0];
+
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      socket.send(JSON.stringify({ type: "answer", to: data.from, answer }));
+    }
+</script>
+</body>
+</html>
